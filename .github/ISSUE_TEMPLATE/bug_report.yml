@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible problem in microbot
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Thank you for helping improve microbot. Never include bot tokens, API keys, webhook secrets, chat history, or private user data."
+  - type: input
+    id: version
+    attributes:
+      label: microbot version or commit
+      placeholder: "0.1.0 or a commit SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and safe logs
+      description: "Redact secrets and personal information before posting."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Local Wrangler development
+        - Cloudflare Workers production
+        - D1 migration
+        - Telegram webhook
+        - Model API integration
+    validations:
+      required: true

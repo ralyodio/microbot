@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a focused improvement to microbot
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: "Describe the user problem before proposing an implementation. Do not include secrets or private chat content."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and operational impact
+      description: "Explain any new access, storage, external API, or cost implications."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
