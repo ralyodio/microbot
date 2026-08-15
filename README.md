@@ -37,6 +37,12 @@ flowchart LR
   G -->|sendMessage| T
 ```
 
+## Quick start
+
+Fork this repository, deploy it to **your own Cloudflare account**, and configure **your own** Telegram bot token and model API key. Do not share credentials with the project maintainer and never commit them to Git.
+
+Each deployment is independent: you create your own D1 database, Workers Secrets, Telegram bot, and model-provider account. The next section explains the complete setup.
+
 ## Deploy in 10 minutes
 
 You need a Cloudflare account, a Telegram bot token from BotFather, and an API endpoint compatible with `POST /chat/completions`.
