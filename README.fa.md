@@ -37,6 +37,12 @@ flowchart LR
   G -->|sendMessage| T
 ```
 
+## شروع سریع
+
+این repository را Fork کنید، آن را روی **حساب Cloudflare خودتان** مستقر کنید و **bot token تلگرام و API key مدلِ خودتان** را وارد کنید. credentialها را با نگهدارندهٔ پروژه به اشتراک نگذارید و هرگز آن‌ها را در Git commit نکنید.
+
+هر استقرار مستقل است: دیتابیس D1، Workers Secrets، ربات تلگرام و حساب ارائه‌دهندهٔ مدل را خودتان می‌سازید. مراحل کامل در بخش بعدی آمده‌اند.
+
 ## انتشار در کمتر از ۱۰ دقیقه
 
 به یک حساب Cloudflare، یک bot token از BotFather و یک endpoint مدل سازگار با `POST /chat/completions` نیاز دارید.
