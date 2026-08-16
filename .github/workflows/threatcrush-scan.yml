@@ -1,0 +1,180 @@
+name: threatcrush security scan
+
+on:
+  pull_request:
+
+# Read-only. Nothing in this job writes to the repository, the pull request or
+# the Security tab, so it asks for no write scope at all — the token cannot
+# comment, label, push or upload even if the scanner were compromised.
+#
+# Findings are delivered two ways that need no permission: the job summary
+# (visible on the run page) and an uploaded artifact containing the SARIF.
+#
+# If you would rather have findings in the Security tab, that is one added
+# scope and one added step; both are marked OPT-IN below. Left off by default
+# because a scanner should not hold a write token it is not using.
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan for credentials and vulnerable patterns
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # persist-credentials: false because nothing here pushes. Left at the
+      # default, checkout leaves a credential in .git/config for the rest of
+      # the job — and the rest of this job runs a scanner installed from the
+      # network over the contents of a pull request. A token no step needs
+      # should not sit in the working tree while that happens.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      # Downloaded, hashed, and only then installed.
+      #
+      # A pinned version says which release to fetch; it does not say the bytes
+      # are the ones that release was published with, and the party answering
+      # "which version" is the party serving the tarball. The hash is the half
+      # a version pin cannot give you.
+      #
+      # --ignore-scripts because a lifecycle script is arbitrary code from the
+      # dependency tree. ThreatCrush declares no install hook of its own, and
+      # `scan` is verified to run from an --ignore-scripts install.
+      #
+      # Into RUNNER_TEMP, never the checkout: `npm pack` writes to the working
+      # directory by default, and a stray .tgz in the tree is something this
+      # workflow would then scan and report on.
+      - name: Install ThreatCrush
+        env:
+          TC_SPEC: "@profullstack/threatcrush@0.11.2"
+          TC_INTEGRITY: "sha512-8N3jqCQixK0Onc+/bvuJaNCSvGZlJYZcSAGsd1nEfRZ4kOu1Ifom7Bd1t2muYJAmAxBTPmz1iseWSay/0gg3Gw=="
+        run: |
+          set -euo pipefail
+
+          name=""
+          for attempt in 1 2 3; do
+            if name=$(npm pack --silent --pack-destination "${RUNNER_TEMP}" "${TC_SPEC}" | tail -1) \
+              && [ -n "${name}" ] && [ -f "${RUNNER_TEMP}/${name}" ]; then
+              break
+            fi
+            name=""
+            delay=$((attempt * 10))
+            echo "::warning::ThreatCrush download attempt ${attempt}/3 failed; retrying in ${delay}s"
+            sleep "${delay}"
+          done
+          if [ -z "${name}" ]; then
+            echo "::error::ThreatCrush download failed after 3 attempts"
+            exit 1
+          fi
+          tarball="${RUNNER_TEMP}/${name}"
+
+          # Not retried, unlike the download. A blip and a mismatch are not the
+          # same event: one is the network, the other is the registry handing
+          # back bytes nobody signed off on, and retrying that just asks again
+          # until it succeeds.
+          got="sha512-$(openssl dgst -sha512 -binary "${tarball}" | openssl base64 -A)"
+          if [ "${got}" != "${TC_INTEGRITY}" ]; then
+            echo "::error::integrity mismatch for ${TC_SPEC}"
+            echo "expected ${TC_INTEGRITY}"
+            echo "got      ${got}"
+            exit 1
+          fi
+          echo "integrity verified: ${got}"
+
+          npm install -g --ignore-scripts "${tarball}"
+
+      # No --deps, so the scan makes no network request of any kind. `--deps`
+      # is the only flag that reaches out (to api.osv.dev, for advisories
+      # against lockfile versions) and it is deliberately not used here.
+      #
+      # No --fail-on, so findings never fail the build. This step is a report.
+      - name: Scan
+        id: scan
+        run: |
+          set -euo pipefail
+          code=0
+          threatcrush scan . --format sarif --output threatcrush.sarif || code=$?
+
+          # The SARIF file is the evidence that a scan happened, and it is the
+          # only evidence worth trusting. An exit code says what the process
+          # thought; the file says what it produced. Absent the file there is
+          # nothing to report, and reporting nothing as "no findings" is the
+          # one failure a security workflow must never have.
+          if [ ! -s threatcrush.sarif ]; then
+            echo "::error::ThreatCrush produced no SARIF (exit ${code}) — this diff was NOT scanned"
+            exit 1
+          fi
+          echo "status=ok" >> "$GITHUB_OUTPUT"
+
+      - name: Summarise findings
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+
+          ok = os.environ.get("SCAN_STATUS") == "ok"
+          try:
+              results = json.load(open("threatcrush.sarif"))["runs"][0]["results"]
+          except Exception:
+              results = None
+
+          print("## ThreatCrush security scan\n")
+
+          # Fail closed: render findings only on positive evidence that a scan
+          # completed. An unexamined diff is not a clean one, and the two are
+          # indistinguishable to whoever reads this.
+          if not ok or results is None:
+              print("**NOT RUN** — the scan did not complete, so this diff was not examined.")
+              print("\nThis is not a clean result. See the job log.")
+          elif not results:
+              print("No findings.")
+          else:
+              levels = {"error": "HIGH/CRITICAL", "warning": "MEDIUM", "note": "LOW"}
+              counts = {}
+              for r in results:
+                  counts[r.get("level", "warning")] = counts.get(r.get("level", "warning"), 0) + 1
+              print(f"**{len(results)}** finding(s) — "
+                    + " | ".join(f"{levels.get(k, k)}: {v}" for k, v in counts.items()))
+              print("\n| Severity | Rule | Location |")
+              print("|---|---|---|")
+              for r in results[:50]:
+                  loc = r["locations"][0]["physicalLocation"]
+                  uri = loc["artifactLocation"]["uri"]
+                  line = loc.get("region", {}).get("startLine", 1)
+                  print(f"| {levels.get(r.get('level','warning'),'INFO')} "
+                        f"| `{r.get('ruleId','?')}` | `{uri}`:{line} |")
+              if len(results) > 50:
+                  # Say so. A silent truncation reads as "that was everything".
+                  print(f"\n_…and {len(results) - 50} more — see the uploaded artifact._")
+              print("\nSnippets are redacted; ThreatCrush never prints matched credential material.")
+          PY
+        env:
+          SCAN_STATUS: ${{ steps.scan.outputs.status }}
+
+      - name: Upload SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # v4.3.6
+        with:
+          name: threatcrush-sarif
+          path: threatcrush.sarif
+          retention-days: 30
+
+      # OPT-IN: findings in the Security tab.
+      #
+      # Uncomment this step AND add `security-events: write` to the
+      # `permissions:` block at the top. That scope lets the job upload code
+      # scanning results; it grants nothing else, and it is the only extra
+      # permission the Security tab needs.
+      #
+      # - name: Upload to the Security tab
+      #   if: always()
+      #   uses: github/codeql-action/upload-sarif@4dd16135b69a43b6c8efb853346f8437d92d3c93 # v3.26.6
+      #   with:
+      #     sarif_file: threatcrush.sarif
+      #     category: threatcrush
